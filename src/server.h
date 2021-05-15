@@ -303,6 +303,7 @@ inline bool operator!=(const void *p, const robj_sharedptr &rhs)
 #define CONFIG_DEFAULT_ENABLE_MULTIMASTER 0
 
 #define ACTIVE_EXPIRE_CYCLE_LOOKUPS_PER_LOOP 64 /* Loopkups per loop. */
+#define ACTIVE_EXPIRE_CYCLE_SUBKEY_LOOKUPS_PER_LOOP 16384 /* Subkey loopkups per loop. */
 #define ACTIVE_EXPIRE_CYCLE_FAST_DURATION 1000 /* Microseconds */
 #define ACTIVE_EXPIRE_CYCLE_SLOW_TIME_PERC 25 /* CPU max % for keys collection */
 #define ACTIVE_EXPIRE_CYCLE_SLOW 0
@@ -2519,7 +2520,7 @@ int removeExpireCore(redisDb *db, robj *key, dictEntry *de);
 int removeSubkeyExpire(redisDb *db, robj *key, robj *subkey);
 void propagateExpire(redisDb *db, robj *key, int lazy);
 void propagateSubkeyExpire(redisDb *db, int type, robj *key, robj *subkey);
-int expireIfNeeded(redisDb *db, robj *key);
+int expireIfNeeded(redisDb *db, robj *key, robj *subkey = nullptr);
 expireEntry *getExpire(redisDb *db, robj_roptr key);
 void setExpire(client *c, redisDb *db, robj *key, robj *subkey, long long when);
 void setExpire(client *c, redisDb *db, robj *key, expireEntry &&entry);

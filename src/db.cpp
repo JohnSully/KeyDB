@@ -46,7 +46,7 @@ struct dbBackup {
  * C-level DB API
  *----------------------------------------------------------------------------*/
 
-int keyIsExpired(redisDb *db, robj *key);
+int keyIsExpired(redisDb *db, robj *key, robj *subkey = nullptr);
 int expireIfNeeded(redisDb *db, robj *key, robj *o);
 void dbOverwriteCore(redisDb *db, dictEntry *de, robj *key, robj *val, bool fUpdateMvcc, bool fRemoveExpire);
 
@@ -1417,23 +1417,15 @@ int removeSubkeyExpire(redisDb *db, robj *key, robj *subkey) {
     if (!itr->FFat())
         return 0;
 
-    int found = 0;
-    for (auto subitr : *itr)
-    {
-        if (subitr.subkey() == nullptr)
-            continue;
-        if (sdscmp((sds)subitr.subkey(), szFromObj(subkey)) == 0)
-        {
-            itr->erase(subitr);
-            found = 1;
-            break;
-        }
+    auto subItr = itr->pfatentry()->find((sds)subkey);
+    if (subItr != itr->pfatentry()->end()) {
+        itr->pfatentry()->erase(subItr);
     }
 
     if (itr->pfatentry()->size() == 0)
         removeExpireCore(db, key, de);
 
-    return found;
+    return subItr != itr->pfatentry()->end();
 }
 
 /* Set an expire to the specified key. If the expire is set in the context
@@ -1617,7 +1609,7 @@ void propagateSubkeyExpire(redisDb *db, int type, robj *key, robj *subkey)
 }
 
 /* Check if the key is expired. Note, this does not check subexpires */
-int keyIsExpired(redisDb *db, robj *key) {
+int keyIsExpired(redisDb *db, robj *key, robj *subkey) {
     expireEntry *pexpire = getExpire(db,key);
     mstime_t now;
 
@@ -1626,17 +1618,13 @@ int keyIsExpired(redisDb *db, robj *key) {
     /* Don't expire anything while loading. It will be done later. */
     if (g_pserver->loading) return 0;
 
-    long long when = -1;
-    for (auto &exp : *pexpire)
-    {
-        if (exp.subkey() == nullptr)
-        {
-            when = exp.when();
-            break;
-        }
+    long long when = INVALID_EXPIRE;
+    auto itr = pexpire->find((sds)subkey);
+    if (itr != pexpire->end()) {
+        when = itr.when(); 
     }
 
-    if (when == -1)
+    if (when == INVALID_EXPIRE)
         return 0;
 
     /* If we are in the context of a Lua script, we pretend that time is
@@ -1686,8 +1674,8 @@ int keyIsExpired(redisDb *db, robj *key) {
  *
  * The return value of the function is 0 if the key is still valid,
  * otherwise the function returns 1 if the key is expired. */
-int expireIfNeeded(redisDb *db, robj *key) {
-    if (!keyIsExpired(db,key)) return 0;
+int expireIfNeeded(redisDb *db, robj *key, robj *subkey) {
+    if (!keyIsExpired(db,key,subkey)) return 0;
 
     /* If we are running in the context of a replica, instead of
      * evicting the expired key from the database, we return ASAP:
@@ -1701,13 +1689,24 @@ int expireIfNeeded(redisDb *db, robj *key) {
 
     /* Delete the key */
     g_pserver->stat_expiredkeys++;
-    propagateExpire(db,key,g_pserver->lazyfree_lazy_expire);
-    notifyKeyspaceEvent(NOTIFY_EXPIRED,
-        "expired",key,db->id);
-    int retval = g_pserver->lazyfree_lazy_expire ? dbAsyncDelete(db,key) :
-                                               dbSyncDelete(db,key);
-    if (retval) signalModifiedKey(NULL,db,key);
-    return retval;
+    if (subkey == nullptr) {
+        propagateExpire(db,key,g_pserver->lazyfree_lazy_expire);
+        
+        notifyKeyspaceEvent(NOTIFY_EXPIRED,
+            "expired",key,db->id);
+        int retval = g_pserver->lazyfree_lazy_expire ? dbAsyncDelete(db,key) :
+                                                dbSyncDelete(db,key);
+        if (retval) signalModifiedKey(NULL,db,key);
+        return retval;
+    }
+    else {
+        dictEntry *de = dictFind(db->dict,key);
+        robj *val = (robj*)dictGetVal(de);
+        propagateSubkeyExpire(db,val->type,key,subkey);
+        auto pexpire = getExpire(db,key);
+        pexpire->pfatentry()->erase(pexpire->pfatentry()->find((sds)szFromObj(subkey)));
+        return 1;
+    }
 }
 
 /* -----------------------------------------------------------------------------

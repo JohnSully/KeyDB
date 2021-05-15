@@ -15,7 +15,15 @@
 
 extern uint64_t dictGenHashFunction(const void *key, int len);
 
-template<typename T, typename T_KEY = T, bool MEMMOVE_SAFE = false>
+template <typename T_KEY> class defaulthashobj {
+public:
+    size_t operator()(const T_KEY &key)
+    {
+        return (size_t)dictGenHashFunction(&key, sizeof(key));
+    }
+};
+
+template<typename T, typename T_KEY = T, bool MEMMOVE_SAFE = false, class hashobj = defaulthashobj<T_KEY>>
 class semiorderedset
 {
     friend struct setiter;
@@ -185,6 +193,18 @@ public:
         }
     }
 
+    const T& random_value_finite() const
+    {
+        size_t basePrimary = rand() % m_data.size();
+        for (size_t idxPrimaryCount = 0; idxPrimaryCount < m_data.size(); ++idxPrimaryCount)
+        {
+            size_t idxPrimary = (basePrimary + idxPrimaryCount) % m_data.size();
+            if (m_data[idxPrimary].empty())
+                continue;
+            return m_data[idxPrimary][rand() % m_data[idxPrimary].size()];
+        }
+    }
+
     void erase(const setiter &itr)
     {
         auto &vecRow = m_data[itr.idxPrimary];
@@ -276,7 +296,7 @@ private:
 
     size_t idxFromObj(const T_KEY &key)
     {
-        size_t v = (size_t)dictGenHashFunction(&key, sizeof(key));
+        size_t v = hashobj{}(key);
         return v & hashmask();
     }
 
